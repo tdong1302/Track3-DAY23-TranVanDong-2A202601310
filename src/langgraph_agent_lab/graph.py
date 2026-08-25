@@ -8,64 +8,126 @@ from __future__ import annotations
 
 from typing import Any
 
-from .nodes import (
-    answer_node,
-    approval_node,
-    ask_clarification_node,
-    classify_node,
-    dead_letter_node,
-    evaluate_node,
-    finalize_node,
-    intake_node,
-    retry_or_fallback_node,
-    risky_action_node,
-    tool_node,
-)
-from .routing import route_after_approval, route_after_classify, route_after_evaluate, route_after_retry
 from .state import AgentState
 
 
 def build_graph(checkpointer: Any | None = None):
     """Build and compile the LangGraph workflow.
 
-    TODO(student): review the architecture and modify nodes/edges only with a clear reason.
-    Required behaviors:
-    - intake -> classify (normalization + routing)
-    - classify routes to answer/tool/clarify/risky/retry
-    - tool -> evaluate creates the retry loop (slide: "done?" check)
-    - risky path requires approval before tool/action
-    - retry loop bounded by max_attempts -> dead_letter on exhaustion
-    - all paths eventually reach finalize -> END
+    Graph architecture:
+    START → intake → classify → [conditional: route_after_classify]
+      simple       → answer → finalize → END
+      tool         → tool → evaluate → [conditional: route_after_evaluate]
+                                          success → answer → finalize → END
+                                          needs_retry → retry → [conditional: route_after_retry]
+                                                                  tool (retry)
+                                                                  dead_letter → finalize → END
+      missing_info → clarify → finalize → END
+      risky        → risky_action → approval → [conditional: route_after_approval]
+                                                  approved → tool → evaluate → ...
+                                                  rejected → clarify → finalize → END
+      error        → retry → [conditional: route_after_retry] → ...
+
+    Node name ↔ function mapping (11 nodes):
+      intake        ← intake_node
+      classify      ← classify_node
+      tool          ← tool_node
+      evaluate      ← evaluate_node
+      answer        ← answer_node
+      clarify       ← ask_clarification_node
+      risky_action  ← risky_action_node
+      approval      ← approval_node
+      retry         ← retry_or_fallback_node
+      dead_letter   ← dead_letter_node
+      finalize      ← finalize_node
     """
-    try:
-        from langgraph.graph import END, START, StateGraph
-    except Exception as exc:  # pragma: no cover - helpful install error
-        raise RuntimeError("LangGraph is required. Run: pip install -e '.[dev]' or pip install langgraph") from exc
+    from langgraph.graph import END, START, StateGraph
 
-    graph = StateGraph(AgentState)
-    graph.add_node("intake", intake_node)
-    graph.add_node("classify", classify_node)
-    graph.add_node("answer", answer_node)
-    graph.add_node("tool", tool_node)
-    graph.add_node("evaluate", evaluate_node)
-    graph.add_node("clarify", ask_clarification_node)
-    graph.add_node("risky_action", risky_action_node)
-    graph.add_node("approval", approval_node)
-    graph.add_node("retry", retry_or_fallback_node)
-    graph.add_node("dead_letter", dead_letter_node)
-    graph.add_node("finalize", finalize_node)
+    from .nodes import (
+        answer_node,
+        approval_node,
+        ask_clarification_node,
+        classify_node,
+        dead_letter_node,
+        evaluate_node,
+        finalize_node,
+        intake_node,
+        retry_or_fallback_node,
+        risky_action_node,
+        tool_node,
+    )
+    from .routing import (
+        route_after_approval,
+        route_after_classify,
+        route_after_evaluate,
+        route_after_retry,
+    )
 
-    graph.add_edge(START, "intake")
-    graph.add_edge("intake", "classify")
-    graph.add_conditional_edges("classify", route_after_classify)
-    graph.add_edge("tool", "evaluate")
-    graph.add_conditional_edges("evaluate", route_after_evaluate)
-    graph.add_edge("clarify", "finalize")
-    graph.add_edge("risky_action", "approval")
-    graph.add_conditional_edges("approval", route_after_approval)
-    graph.add_conditional_edges("retry", route_after_retry)
-    graph.add_edge("answer", "finalize")
-    graph.add_edge("dead_letter", "finalize")
-    graph.add_edge("finalize", END)
+    # ── 1. Create StateGraph ───────────────────────────────────────────
+    builder = StateGraph(AgentState)
 
-    return graph.compile(checkpointer=checkpointer)
+    # ── 2. Register 11 nodes ──────────────────────────────────────────
+    builder.add_node("intake", intake_node)
+    builder.add_node("classify", classify_node)
+    builder.add_node("tool", tool_node)
+    builder.add_node("evaluate", evaluate_node)
+    builder.add_node("answer", answer_node)
+    builder.add_node("clarify", ask_clarification_node)
+    builder.add_node("risky_action", risky_action_node)
+    builder.add_node("approval", approval_node)
+    builder.add_node("retry", retry_or_fallback_node)
+    builder.add_node("dead_letter", dead_letter_node)
+    builder.add_node("finalize", finalize_node)
+
+    # ── 3. Fixed edges ────────────────────────────────────────────────
+    builder.add_edge(START, "intake")
+    builder.add_edge("intake", "classify")
+    builder.add_edge("tool", "evaluate")
+    builder.add_edge("risky_action", "approval")
+    builder.add_edge("answer", "finalize")
+    builder.add_edge("clarify", "finalize")
+    builder.add_edge("dead_letter", "finalize")
+    builder.add_edge("finalize", END)
+
+    # ── 4. Conditional edges ──────────────────────────────────────────
+    builder.add_conditional_edges(
+        "classify",
+        route_after_classify,
+        {
+            "answer": "answer",
+            "tool": "tool",
+            "clarify": "clarify",
+            "risky_action": "risky_action",
+            "retry": "retry",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "evaluate",
+        route_after_evaluate,
+        {
+            "answer": "answer",
+            "retry": "retry",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "retry",
+        route_after_retry,
+        {
+            "tool": "tool",
+            "dead_letter": "dead_letter",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "approval",
+        route_after_approval,
+        {
+            "tool": "tool",
+            "clarify": "clarify",
+        },
+    )
+
+    # ── 5. Compile with checkpointer ──────────────────────────────────
+    return builder.compile(checkpointer=checkpointer)

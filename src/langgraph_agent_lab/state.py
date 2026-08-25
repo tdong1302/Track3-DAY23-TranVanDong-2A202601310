@@ -41,8 +41,8 @@ class ApprovalDecision(BaseModel):
 class AgentState(TypedDict, total=False):
     """LangGraph state.
 
-    TODO(student): decide which fields should be append-only and which should be overwritten.
-    The current annotations give a safe starting point for auditability.
+    Scalar / "current value" fields use overwrite (default LangGraph behavior).
+    Append-only audit fields use the `add` reducer via Annotated[list, add].
     """
 
     thread_id: str
@@ -53,10 +53,12 @@ class AgentState(TypedDict, total=False):
     attempt: int
     max_attempts: int
     final_answer: str | None
-    pending_question: str | None
-    proposed_action: str | None
-    approval: dict[str, Any] | None
-    evaluation_result: str | None
+    # Additional fields needed by nodes and routing functions
+    evaluation_result: str | None   # "success" | "needs_retry" — drives route_after_evaluate
+    pending_question: str | None    # Clarification question — written by ask_clarification_node
+    proposed_action: str | None     # Risky action description — written by risky_action_node
+    approval: dict[str, Any] | None  # ApprovalDecision mapping — written by approval_node
+    # Append-only lists with reducer `add`
     messages: Annotated[list[str], add]
     tool_results: Annotated[list[str], add]
     errors: Annotated[list[str], add]
@@ -91,10 +93,10 @@ def initial_state(scenario: Scenario) -> AgentState:
         "attempt": 0,
         "max_attempts": scenario.max_attempts,
         "final_answer": None,
+        "evaluation_result": None,
         "pending_question": None,
         "proposed_action": None,
         "approval": None,
-        "evaluation_result": None,
         "messages": [],
         "tool_results": [],
         "errors": [],

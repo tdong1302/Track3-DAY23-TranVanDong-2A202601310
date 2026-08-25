@@ -1,55 +1,7 @@
-"""Report generation helper."""
-
-from __future__ import annotations
-
-from datetime import datetime
-from pathlib import Path
-
-from .metrics import MetricsReport
-
-
-def render_report(metrics: MetricsReport) -> str:
-    """Render a complete lab report from metrics data.
-
-    Generates a report including:
-    1. Metrics summary table
-    2. Per-scenario results table
-    3. Architecture explanation
-    4. Failure analysis (two failure modes)
-    5. Persistence/recovery evidence
-    6. Improvement plan
-    """
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    # ── Summary table ─────────────────────────────────────────────────
-    summary_rows = "\n".join(
-        [
-            f"| Total Scenarios     | {metrics.total_scenarios} |",
-            f"| Success Rate        | {metrics.success_rate:.2%} |",
-            f"| Avg Nodes Visited   | {metrics.avg_nodes_visited:.1f} |",
-            f"| Total Retries       | {metrics.total_retries} |",
-            f"| Total Interrupts    | {metrics.total_interrupts} |",
-            f"| Resume Success      | {metrics.resume_success} |",
-        ]
-    )
-
-    # ── Per-scenario table ────────────────────────────────────────────
-    scenario_header = (
-        "| Scenario ID | Expected | Actual | Success | Nodes | Retries | Approval | Errors |\n"
-        "|-------------|----------|--------|---------|-------|---------|----------|--------|"
-    )
-    scenario_rows = "\n".join(
-        f"| {m.scenario_id} | {m.expected_route} | {m.actual_route or '?'} "
-        f"| {'✅' if m.success else '❌'} | {m.nodes_visited} | {m.retry_count} "
-        f"| {'req+obs' if m.approval_required and m.approval_observed else ('req' if m.approval_required else '-')} "
-        f"| {len(m.errors)} |"
-        for m in metrics.scenario_metrics
-    )
-
-    report = f"""# Lab Report — LangGraph Agentic Orchestration
+# Lab Report — LangGraph Agentic Orchestration
 
 **Student:** Tran Van Dong (2A202601310)
-**Date:** {now}
+**Date:** 2026-08-25 19:43
 **Provider:** OpenAI (gpt-4o-mini)
 
 ---
@@ -58,14 +10,26 @@ def render_report(metrics: MetricsReport) -> str:
 
 | Metric | Value |
 |--------|-------|
-{summary_rows}
+| Total Scenarios     | 7 |
+| Success Rate        | 100.00% |
+| Avg Nodes Visited   | 6.4 |
+| Total Retries       | 3 |
+| Total Interrupts    | 2 |
+| Resume Success      | False |
 
 ---
 
 ## 2. Scenario Results
 
-{scenario_header}
-{scenario_rows}
+| Scenario ID | Expected | Actual | Success | Nodes | Retries | Approval | Errors |
+|-------------|----------|--------|---------|-------|---------|----------|--------|
+| S01_simple | simple | simple | ✅ | 4 | 0 | - | 0 |
+| S02_tool | tool | tool | ✅ | 6 | 0 | - | 0 |
+| S03_missing | missing_info | missing_info | ✅ | 4 | 0 | - | 0 |
+| S04_risky | risky | risky | ✅ | 8 | 0 | req+obs | 0 |
+| S05_error | error | error | ✅ | 10 | 2 | - | 2 |
+| S06_delete | risky | risky | ✅ | 8 | 0 | req+obs | 0 |
+| S07_dead_letter | error | error | ✅ | 5 | 1 | - | 1 |
 
 ---
 
@@ -117,11 +81,11 @@ START → intake → classify → [route_after_classify]
 | risk_level         | str              | Overwrite       |
 | attempt            | int              | Overwrite       |
 | max_attempts       | int              | Overwrite (init)|
-| final_answer       | str \\| None      | Overwrite       |
-| evaluation_result  | str \\| None      | Overwrite       |
-| pending_question   | str \\| None      | Overwrite       |
-| proposed_action    | str \\| None      | Overwrite       |
-| approval           | dict \\| None     | Overwrite       |
+| final_answer       | str \| None      | Overwrite       |
+| evaluation_result  | str \| None      | Overwrite       |
+| pending_question   | str \| None      | Overwrite       |
+| proposed_action    | str \| None      | Overwrite       |
+| approval           | dict \| None     | Overwrite       |
 | messages           | list[str]        | **Append** (add)|
 | tool_results       | list[str]        | **Append** (add)|
 | errors             | list[str]        | **Append** (add)|
@@ -145,25 +109,25 @@ merges partial updates correctly without node mutation.
 
 ### Failure Mode 1: Tool Failure → Bounded Retry → Dead Letter
 
-**Scenario:** S05_error / S07_dead_letter
-**Signal:** `tool_results` latest entry contains "ERROR".
-**Detection:** `evaluate_node` checks for "ERROR" substring → `evaluation_result = "needs_retry"`.
-**Route:** `route_after_evaluate` → "retry" → `retry_or_fallback_node` increments `attempt`.
-`route_after_retry` routes to "tool" if `attempt < max_attempts`, else "dead_letter".
-**S07 trace:** `max_attempts=1`. After first retry, `attempt=1 >= 1` → `dead_letter` → `finalize`.
-**Termination guarantee:** The bounded check `attempt >= max_attempts` prevents infinite loops.
+**Scenario:** S05_error / S07_dead_letter  
+**Signal:** `tool_results` latest entry contains "ERROR".  
+**Detection:** `evaluate_node` checks for "ERROR" substring → `evaluation_result = "needs_retry"`.  
+**Route:** `route_after_evaluate` → "retry" → `retry_or_fallback_node` increments `attempt`.  
+`route_after_retry` routes to "tool" if `attempt < max_attempts`, else "dead_letter".  
+**S07 trace:** `max_attempts=1`. After first retry, `attempt=1 >= 1` → `dead_letter` → `finalize`.  
+**Termination guarantee:** The bounded check `attempt >= max_attempts` prevents infinite loops.  
 **Residual risk:** The heuristic "ERROR substring" check may miss non-standard error formats;
 an LLM-as-judge evaluator would be more robust.
 
 ### Failure Mode 2: Risky Action Rejected by Approver
 
-**Scenario:** S04_risky / S06_delete (rejected branch)
-**Signal:** `approval.approved == False`.
-**Detection:** `route_after_approval` reads `approval.get("approved")`.
+**Scenario:** S04_risky / S06_delete (rejected branch)  
+**Signal:** `approval.approved == False`.  
+**Detection:** `route_after_approval` reads `approval.get("approved")`.  
 **Route:** "clarify" → `ask_clarification_node` reads `approval.comment` + `proposed_action`
-and generates an actionable question explaining the rejection.
-**Termination guarantee:** `clarify` always leads to `finalize → END` via fixed edge.
-**Containment:** The tool node is never reached; the risky side effect is never executed.
+and generates an actionable question explaining the rejection.  
+**Termination guarantee:** `clarify` always leads to `finalize → END` via fixed edge.  
+**Containment:** The tool node is never reached; the risky side effect is never executed.  
 **Residual risk:** The mock approver always approves in CI; real rejections require LANGGRAPH_INTERRUPT=true.
 
 ---
@@ -172,8 +136,8 @@ and generates an actionable question explaining the rejection.
 
 ### MemorySaver (Default)
 - **Checkpointer:** `MemorySaver` is attached to the compiled graph via `build_graph(checkpointer=...)`.
-- **Thread ID:** Each scenario gets a unique `thread_id = "thread-{{scenario_id}}"` from `initial_state()`.
-  The CLI passes it as `{{"configurable": {{"thread_id": state["thread_id"]}}}}`.
+- **Thread ID:** Each scenario gets a unique `thread_id = "thread-{scenario_id}"` from `initial_state()`.
+  The CLI passes it as `{"configurable": {"thread_id": state["thread_id"]}}`.
 - **State History:** Within a process, `graph.get_state_history(config)` shows all checkpoints:
   ```
   Thread ID: thread-persist-demo
@@ -222,12 +186,3 @@ This is the single change most likely to improve hidden-scenario accuracy on non
 The SQLite backend is implemented and checkpoints survive reconnect. The next step is implementing
 full resume: calling `graph.invoke(None, config=config)` after process restart from the last
 checkpoint. This requires saving the `thread_id` externally and integrating a resume CLI command.
-"""
-    return report
-
-
-def write_report(metrics: MetricsReport, output_path: str | Path) -> None:
-    """Write the rendered report to a file."""
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_report(metrics), encoding="utf-8")

@@ -10,6 +10,20 @@ def test_scenario_validation():
     assert state["events"] == []
 
 
+def test_initial_state_has_required_fields():
+    """Verify initial_state includes all fields needed by the graph."""
+    scenario = Scenario(id="test", query="test query", expected_route=Route.SIMPLE)
+    state = initial_state(scenario)
+    assert "query" in state
+    assert "route" in state
+    assert "attempt" in state
+    assert "max_attempts" in state
+    assert "messages" in state
+    assert "tool_results" in state
+    assert "errors" in state
+    assert "events" in state
+
+
 def test_load_scenarios():
     scenarios = load_scenarios("data/sample/scenarios.jsonl")
     assert len(scenarios) >= 6

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -10,7 +11,13 @@ import typer
 import yaml
 
 from .graph import build_graph
-from .metrics import MetricsReport, metric_from_state, summarize_metrics, write_metrics
+from .metrics import (
+    MetricsReport,
+    ScenarioMetric,
+    metric_from_state,
+    summarize_metrics,
+    write_metrics,
+)
 from .persistence import build_checkpointer
 from .report import write_report
 from .scenarios import load_scenarios
@@ -29,12 +36,22 @@ def run_scenarios(
     scenarios = load_scenarios(cfg["scenarios_path"])
     checkpointer = build_checkpointer(cfg.get("checkpointer", "memory"), cfg.get("database_url"))
     graph = build_graph(checkpointer=checkpointer)
-    metrics = []
+    metrics: list[ScenarioMetric] = []
     for scenario in scenarios:
         state = initial_state(scenario)
         run_config = {"configurable": {"thread_id": state["thread_id"]}}
+        t0 = time.perf_counter()
         final_state = graph.invoke(state, config=run_config)
-        metrics.append(metric_from_state(final_state, scenario.expected_route.value, scenario.requires_approval))
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        m = metric_from_state(
+            final_state, scenario.expected_route.value, scenario.requires_approval
+        )
+        # Patch in real latency
+        metrics.append(m.model_copy(update={"latency_ms": elapsed_ms}))
+        typer.echo(
+            f"  [{scenario.id}] route={final_state.get('route')} "
+            f"success={m.success} latency={elapsed_ms}ms"
+        )
     report = summarize_metrics(metrics)
     write_metrics(report, output)
     if cfg.get("report_path"):

@@ -2,7 +2,7 @@
 
 Build a production-style LangGraph workflow for a support-ticket agent with state management, conditional routing, retry loops, human-in-the-loop approval, persistence, and metrics.
 
-This is a **starter skeleton**. Core logic is left as `TODO(student)` — implement your own design.
+This is a **starter skeleton**. All node implementations, routing logic, and graph wiring are left as `TODO(student)` — you must build them from scratch.
 
 ---
 
@@ -10,20 +10,46 @@ This is a **starter skeleton**. Core logic is left as `TODO(student)` — implem
 
 | Category | Points | What we look for |
 |---|---:|---|
-| Architecture & state schema | 20 | Typed state with correct reducers, lean serializable fields, clear node boundaries |
-| Graph behavior | 25 | All scenario routes correct, bounded retry loop, HITL approval path, all routes terminate |
-| Persistence & recovery | 15 | Checkpointer wired, thread_id per run, state history or crash-resume evidence |
-| Metrics & tests | 20 | `metrics.json` valid, scenario coverage, tests pass, meaningful counts |
-| Report & demo | 15 | Architecture explanation, metrics table, failure analysis, improvement ideas |
-| Production hygiene | 5 | Config, environment handling, lint/type discipline |
+| Architecture & state schema | 15 | Typed state with correct reducers, student-added fields, lean serializable state |
+| Graph construction & wiring | 15 | All nodes registered, edges correct, conditional edges work, graph compiles |
+| LLM integration | 15 | classify_node + answer_node use real LLM calls (structured output, grounded generation) |
+| Graph behavior | 20 | All scenario routes correct, bounded retry loop, HITL approval path, all routes terminate |
+| Persistence & recovery | 10 | Checkpointer wired, thread_id per run, state history or crash-resume evidence |
+| Metrics & tests | 15 | `metrics.json` valid, scenario coverage, tests pass, meaningful counts |
+| Report & demo | 10 | Architecture explanation, metrics table, failure analysis, improvement ideas |
 
 **Grade bands:**
-- **90–100**: Production-quality graph + metrics + report + at least one bonus extension
-- **75–89**: Core graph works, metrics valid, report explains trade-offs
-- **60–74**: Graph mostly works but persistence/report/error handling incomplete
-- **< 60**: Does not run, hard-codes scenarios, or lacks metrics/report
+- **90–100**: Production-quality graph + LLM integration + metrics + report + at least one bonus extension
+- **75–89**: Core graph works with LLM, metrics valid, report explains trade-offs
+- **60–74**: Graph mostly works but LLM integration, persistence, or report incomplete
+- **< 60**: Does not run, hard-codes scenarios, or lacks LLM integration/metrics/report
 
-> **Critical rule**: Do NOT hard-code answers to specific scenario queries. Your graph must route based on **keywords and state logic**, not by matching exact scenario IDs. We grade with additional hidden scenarios that test the same routing rules but use different queries.
+> **Critical rule**: Do NOT hard-code answers to specific scenario queries. Your graph must route based on **LLM classification and state logic**, not by matching exact scenario IDs. We grade with additional hidden scenarios.
+
+---
+
+## LLM Integration Requirements
+
+This lab requires real LLM API calls in specific nodes:
+
+| Node | Requirement | Pattern |
+|---|---|---|
+| `classify_node` | **MUST use LLM** | Structured output (`.with_structured_output()`) for intent classification |
+| `answer_node` | **MUST use LLM** | Grounded response generation using tool_results/context |
+| `evaluate_node` | **SHOULD use LLM** (bonus) | LLM-as-judge to evaluate tool results quality |
+
+A helper is provided in `src/langgraph_agent_lab/llm.py` — it reads your API key from `.env` and returns a LangChain chat model.
+
+```bash
+# Install your preferred LLM provider
+pip install langchain-openai    # for OpenAI
+# OR
+pip install langchain-anthropic  # for Anthropic
+
+# Configure .env
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY or ANTHROPIC_API_KEY
+```
 
 ---
 
@@ -66,19 +92,19 @@ scenarios.jsonl  →  scenarios.py loads them  →  cli.py runs each through you
 3. After execution, it checks: did `actual_route` match `expected_route`? Did HITL fire when required?
 4. Results go to `outputs/metrics.json`
 
-### How to design your routing logic
+### How to design your classification
 
-Your `classify_node` should use **keyword-based heuristics** to pick routes:
+Your `classify_node` should use an LLM to classify intent. Design a prompt that routes queries:
 
-| Route | Trigger keywords (examples) |
+| Route | Intent |
 |---|---|
-| `risky` | refund, delete, send, cancel, remove, revoke |
-| `tool` | status, order, lookup, check, track, find, search |
-| `missing_info` | Very short/vague queries (e.g., < 5 words with pronouns like "it") |
-| `error` | timeout, fail, error, crash, unavailable |
-| `simple` | Default — anything that doesn't match above |
+| `risky` | Actions with side effects: refunds, deletions, sending emails, cancellations |
+| `tool` | Information lookups: order status, tracking, search queries |
+| `missing_info` | Vague/incomplete queries lacking actionable context |
+| `error` | System failures: timeouts, crashes, service unavailable |
+| `simple` | General questions answerable without tools or actions |
 
-**Priority matters**: check risky keywords first (highest priority), then tool, then missing_info, then error, then default to simple. This prevents conflicts when a query contains keywords from multiple categories.
+**Priority matters**: risky > tool > missing_info > error > simple. Design your LLM prompt to respect this priority.
 
 ### Adding your own test scenarios
 
@@ -88,7 +114,7 @@ You can add extra lines to `scenarios.jsonl` to test edge cases:
 {"id":"S08_custom","query":"Cancel my subscription immediately","expected_route":"risky","requires_approval":true,"tags":["custom"]}
 ```
 
-This helps you verify your routing handles cases beyond the 7 samples. The grading script will also test with scenarios you haven't seen.
+The grading script will also test with scenarios you haven't seen.
 
 ---
 
@@ -98,73 +124,78 @@ This helps you verify your routing handles cases beyond the 7 samples. The gradi
 # Option A: conda
 conda activate ai-lab
 pip install -e '.[dev]'
+pip install langchain-openai  # or langchain-anthropic
 
 # Option B: venv
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
+pip install langchain-openai  # or langchain-anthropic
+
+# Configure LLM
+cp .env.example .env
+# Edit .env — set your API key
 
 # Verify setup
-make test
+make test  # some tests will fail until you implement TODOs
 ```
-
-`pip install -e '.[dev]'` installs this project in editable mode with dev dependencies (pytest, ruff, mypy). Editable mode means code changes take effect immediately without reinstalling.
 
 ---
 
 ## Step-by-step workflow
 
-### Phase 1: Core graph (0–75 min) — worth 45 points
+### Phase 1: State + nodes (0–90 min) — worth 30 points
 
-1. **`state.py`** — Confirm which fields use `Annotated[list, add]` (append-only reducer). Add `evaluation_result` field for retry loop gate.
+1. **`state.py`** — Review existing fields. Add missing fields as you discover them:
+   - `evaluation_result` for retry loop gate
+   - `pending_question` for clarification flow
+   - `proposed_action` for risky action flow
+   - `approval` for HITL decisions
 
-2. **`nodes.py`** — Implement each node function. Key ones:
-   - `classify_node`: keyword-based routing (see table above)
-   - `evaluate_node`: check tool results for errors → set `evaluation_result` to `"needs_retry"` or `"success"`
-   - `dead_letter_node`: log failures when max retries exceeded
-   - `approval_node`: mock approval (return `approved=True` by default)
+2. **`llm.py`** — Review the helper. Configure `.env` with your API key.
 
-3. **`routing.py`** — Implement routing functions:
-   - `route_after_classify`: map route string → next node name
-   - `route_after_evaluate`: if `needs_retry` → `"retry"`, else → `"answer"`
-   - `route_after_retry`: if `attempt < max_attempts` → back to tool, else → `"dead_letter"`
+3. **`nodes.py`** — Implement all 10 node functions:
+   - `classify_node`: **LLM + structured output** for intent classification
+   - `tool_node`: mock tool with error simulation
+   - `evaluate_node`: tool result quality check (LLM-as-judge for bonus)
+   - `answer_node`: **LLM-generated** grounded response
+   - `ask_clarification_node`: generate clarification question
+   - `risky_action_node`: prepare action for approval
+   - `approval_node`: mock approval with optional interrupt()
+   - `retry_or_fallback_node`: increment attempt counter
+   - `dead_letter_node`: handle max retry exhaustion
+   - `finalize_node`: emit final audit event
 
-4. **`graph.py`** — Wire nodes and edges. Target architecture:
+### Phase 2: Routing + graph (90–150 min) — worth 35 points
 
-   ```
-   START → intake → classify → [conditional routing]
-     simple       → answer → finalize → END
-     tool         → tool → evaluate → answer → finalize → END
-     missing_info → clarify → finalize → END
-     risky        → risky_action → approval → tool → evaluate → answer → finalize → END
-     error        → retry → tool → evaluate → [retry loop or answer]
-     max retry    → dead_letter → finalize → END
-   ```
+4. **`routing.py`** — Implement all 4 routing functions from scratch
+5. **`graph.py`** — Build the complete StateGraph:
+   - Import and register all 11 nodes
+   - Wire fixed + conditional edges
+   - All paths must terminate at finalize → END
+6. **Verify**: `make test` and `make run-scenarios`
 
-5. **Verify**: `make test` and `make run-scenarios`
+### Phase 3: Persistence (150–180 min) — worth 10 points
 
-### Phase 2: Persistence (75–120 min) — worth 15 points
-
-6. **`persistence.py`** — Implement checkpointer factory:
-   - `"memory"` → `MemorySaver()` (already works for dev)
-   - `"sqlite"` → `SqliteSaver` with `sqlite3.connect()` and WAL mode
+7. **`persistence.py`** — Implement SQLite checkpointer
    - Show evidence: thread_id per run, state history, or crash-resume
 
-### Phase 3: Metrics & report (120–180 min) — worth 35 points
+### Phase 4: Metrics & report (180–240 min) — worth 25 points
 
-7. **Run all scenarios**: `make run-scenarios` → generates `outputs/metrics.json`
-8. **Validate**: `make grade-local` → checks metrics schema
-9. **Write report**: Fill `reports/lab_report.md` — explain architecture, metrics, failures, improvements
+8. **`report.py`** — Implement `render_report()` from metrics data
+9. **Run**: `make run-scenarios` → `outputs/metrics.json`
+10. **Validate**: `make grade-local`
+11. **Report**: Fill `reports/lab_report.md`
 
-### Phase 4: Bonus extensions (180+ min) — push toward 90+
+### Phase 5: Extensions (240+ min) — push toward 90+
 
 Pick one or more:
-- **Parallel fan-out**: Use `Send()` to run two tools concurrently, merge results via `add` reducer
-- **Real HITL**: Set `LANGGRAPH_INTERRUPT=true`, use `interrupt()` in approval_node
-- **Streamlit UI**: Build approval/reject interface with interrupt/resume
-- **Time travel**: Use `get_state_history()` to replay from earlier checkpoint
-- **Crash recovery**: Show SQLite checkpoint survives process kill + restart
-- **Graph diagram**: Export Mermaid diagram via `graph.get_graph().draw_mermaid()`
+- **Parallel fan-out**: Use `Send()` for concurrent tool calls
+- **Real HITL**: `LANGGRAPH_INTERRUPT=true` with `interrupt()`
+- **Streamlit UI**: Build approval/reject interface
+- **Time travel**: `get_state_history()` replay
+- **Crash recovery**: SQLite checkpoint survives process kill
+- **Graph diagram**: `graph.get_graph().draw_mermaid()`
 
 ---
 
@@ -184,11 +215,14 @@ Pick one or more:
 
 ## Submission checklist
 
-- [ ] All `TODO(student)` sections completed
+- [ ] All `TODO(student)` sections implemented
+- [ ] `.env` configured with LLM API key
+- [ ] `classify_node` uses real LLM call with structured output
+- [ ] `answer_node` uses real LLM call for grounded responses
 - [ ] `make test` passes
 - [ ] `make run-scenarios` generates valid `outputs/metrics.json`
 - [ ] `make grade-local` passes validation
-- [ ] `reports/lab_report.md` filled in with architecture explanation, metrics analysis, and improvement ideas
+- [ ] `reports/lab_report.md` completed with architecture, metrics, and analysis
 - [ ] Can explain at least one route and one failure mode during demo
 
 **For 90+ points, also include:**
@@ -199,12 +233,14 @@ Pick one or more:
 
 ## Common pitfalls
 
-1. **Keyword conflicts**: "Check order status" contains both "check" (tool) and "order" (tool). Test priority carefully — risky keywords should take precedence over tool keywords.
+1. **Missing state fields**: The starter intentionally omits some fields from `AgentState`. You must add `evaluation_result`, `pending_question`, `proposed_action`, and `approval` as you implement nodes that need them.
 
-2. **Word boundary matching**: "Can you fix it?" — match "it" as a whole word, not as substring of "item" or "iteration". Strip punctuation before checking.
+2. **LLM structured output**: Use `.with_structured_output(YourModel)` to get reliable classification. Raw text parsing is fragile and will fail on hidden test scenarios.
 
-3. **Unbounded retry**: Always check `attempt < max_attempts`. Without this bound, error scenarios loop forever.
+3. **Unbounded retry**: Always check `attempt < max_attempts` in `route_after_retry`. Without this bound, error scenarios loop forever.
 
-4. **SqliteSaver API**: In `langgraph-checkpoint-sqlite` 3.x, use `SqliteSaver(conn=sqlite3.connect(...))` not `SqliteSaver.from_conn_string()` (returns context manager, not checkpointer).
+4. **Graph wiring**: Every path must end at `finalize → END`. Missing this means the graph hangs for some scenarios.
 
-5. **Forgetting finalize**: Every route must end at `finalize → END`. Missing this means the graph never terminates for some scenarios.
+5. **SqliteSaver API**: In `langgraph-checkpoint-sqlite` 3.x, use `SqliteSaver(conn=sqlite3.connect(...))` not `SqliteSaver.from_conn_string()`.
+
+6. **API key not set**: If you get "No LLM API key found", check your `.env` file and make sure it's loaded (use `python-dotenv` or export manually).

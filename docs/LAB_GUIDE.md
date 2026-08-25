@@ -1,6 +1,6 @@
 # Lab Guide
 
-## Step 1 - Understand the target graph
+## Step 1 — Understand the target graph
 
 Target flow:
 
@@ -15,37 +15,86 @@ route error        -> retry -> tool -> evaluate -> retry -> ... (loop until succ
 route (max retry)  -> retry -> dead_letter -> finalize -> END
 ```
 
-## Step 2 - Implement TODOs in order
+## Step 2 — Implement TODOs in order
 
-1. `state.py`: confirm which fields are append-only. Note `evaluation_result` for retry loop.
-2. `nodes.py`: implement node logic without mutating the input state. Key nodes: `evaluate_node` (retry loop gate), `dead_letter_node` (error escalation).
-3. `routing.py`: make route decisions explicit and safe. Note `route_after_evaluate` creates the retry loop.
-4. `graph.py`: verify all paths eventually terminate. Check: retry loop is bounded by `max_attempts`.
-5. `metrics.py`: add any extra metrics you want to report.
-6. `report.py`: generate or fill `reports/lab_report.md`.
+### Phase 1: State schema + nodes (0–90 min)
 
-## Step 3 - Run scenarios
+1. **`state.py`**: Review existing fields. You will need to ADD fields as you implement nodes:
+   - `evaluation_result` — needed for retry loop gate in `route_after_evaluate`
+   - `pending_question` — needed for clarification flow
+   - `proposed_action` — needed for risky action flow
+   - `approval` — needed for HITL approval decisions
+   - Decide which new fields should be append-only (`Annotated[list, add]`) vs overwrite
+
+2. **`llm.py`**: Review the LLM helper. Set up your `.env` with `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Install `pip install langchain-openai` or `pip install langchain-anthropic`.
+
+3. **`nodes.py`**: Implement all node functions. Key requirements:
+   - `classify_node`: **MUST use LLM** with structured output for intent classification
+   - `answer_node`: **MUST use LLM** to generate grounded responses
+   - `evaluate_node`: SHOULD use LLM-as-judge (heuristic OK for base score)
+   - `tool_node`: mock tool with error simulation for retry testing
+   - `approval_node`: mock approval (approved=True) by default
+   - `dead_letter_node`: log failures when max retries exceeded
+
+### Phase 2: Routing + graph wiring (90–150 min)
+
+4. **`routing.py`**: Implement all 4 routing functions:
+   - `route_after_classify`: map route string → next node name
+   - `route_after_evaluate`: retry loop gate (needs_retry → retry, else → answer)
+   - `route_after_retry`: bounded retry check (attempt < max → tool, else → dead_letter)
+   - `route_after_approval`: approved → tool, rejected → clarify
+
+5. **`graph.py`**: Build the complete StateGraph:
+   - Import and register all 11 nodes
+   - Wire fixed edges (START→intake, intake→classify, tool→evaluate, etc.)
+   - Wire conditional edges using routing functions
+   - Compile with checkpointer
+   - Verify: all paths terminate at finalize → END
+
+6. **Verify**: `make test` and `make run-scenarios`
+
+### Phase 3: Persistence (150–180 min)
+
+7. **`persistence.py`**: Implement SQLite checkpointer:
+   - `"sqlite"` → `SqliteSaver` with `sqlite3.connect()` and WAL mode
+   - Show evidence: thread_id per run, state history, or crash-resume
+
+### Phase 4: Metrics, report, tests (180–240 min)
+
+8. **`report.py`**: Implement `render_report()` using the template
+9. **Run all scenarios**: `make run-scenarios` → generates `outputs/metrics.json`
+10. **Validate**: `make grade-local` → checks metrics schema
+11. **Write report**: Fill `reports/lab_report.md` with architecture, metrics, failure analysis
+
+### Phase 5: Extensions (240+ min) — push toward 90+
+
+Pick one or more:
+- **Real HITL**: Set `LANGGRAPH_INTERRUPT=true`, use `interrupt()` in approval_node
+- **Streamlit UI**: Build approval/reject interface with interrupt/resume
+- **Time travel**: Use `get_state_history()` to replay from earlier checkpoint
+- **Crash recovery**: Show SQLite checkpoint survives process kill + restart
+- **Parallel fan-out**: Use `Send()` to run two tools concurrently
+- **Graph diagram**: Export Mermaid diagram via `graph.get_graph().draw_mermaid()`
+
+## Step 3 — Run and validate
 
 ```bash
 make run-scenarios
 make grade-local
 ```
 
-## Step 4 - Extension tasks
+## Step 4 — Extension tasks
 
-Pick at least one if you finish early:
-
-- Switch to SQLite persistence (`checkpointer: sqlite` in lab.yaml) and verify state survives restart.
-- Demonstrate crash-resume with the same `thread_id`.
-- Add time-travel replay from a previous checkpoint using `get_state_history()`.
-- Enable real HITL with `LANGGRAPH_INTERRUPT=true` and build a Streamlit approval UI.
-- Add parallel fan-out for two mock tools and merge evidence.
-- Export a graph diagram and include it in the report.
+See Phase 5 above.
 
 ## Submission checklist
 
-- [ ] `make test` passes.
-- [ ] `make run-scenarios` writes `outputs/metrics.json`.
-- [ ] `make grade-local` validates metrics.
-- [ ] `reports/lab_report.md` is completed.
-- [ ] You can explain one route and one failure mode in demo.
+- [ ] All `TODO(student)` sections implemented
+- [ ] `.env` configured with LLM API key
+- [ ] `make test` passes
+- [ ] `make run-scenarios` writes `outputs/metrics.json`
+- [ ] `make grade-local` validates metrics
+- [ ] `reports/lab_report.md` is completed
+- [ ] `classify_node` uses real LLM call (not keyword-only)
+- [ ] `answer_node` uses real LLM call (not hardcoded)
+- [ ] You can explain one route and one failure mode in demo

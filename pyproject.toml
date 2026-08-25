@@ -14,6 +14,7 @@ dependencies = [
   "rich>=13.7",
   "typer>=0.12",
   "langgraph>=0.3.0",
+  "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,9 @@ dev = [
   "ruff>=0.5.0",
   "mypy>=1.10",
 ]
+google = ["langchain-google-genai>=2.1.0"]
+openai = ["langchain-openai>=0.3.0"]
+anthropic = ["langchain-anthropic>=0.3.0"]
 sqlite = ["langgraph-checkpoint-sqlite>=2.0"]
 postgres = ["langgraph-checkpoint-postgres>=2.0"]
 
@@ -40,7 +44,24 @@ target-version = "py311"
 select = ["E", "F", "I", "B", "UP", "N", "ANN"]
 ignore = ["ANN101", "ANN102"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN", "E501", "F401"]
+"tests/test_graph_smoke.py" = ["ANN", "E501", "F401", "E402"]
+"src/langgraph_agent_lab/graph.py" = ["ANN201", "ANN401"]
+"src/langgraph_agent_lab/llm.py" = ["ANN201"]
+"src/langgraph_agent_lab/persistence.py" = ["ANN401"]
+"src/langgraph_agent_lab/state.py" = ["ANN401", "E501", "I001"]
+"src/langgraph_agent_lab/metrics.py" = ["E501"]
+"src/langgraph_agent_lab/scenarios.py" = ["F401"]
+"src/langgraph_agent_lab/nodes.py" = ["E501"]
+"src/langgraph_agent_lab/report.py" = ["E501"]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q --strict-markers"
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_return_any = false
